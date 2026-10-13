@@ -5,7 +5,6 @@ import {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
   ReactNode,
-  RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -33,6 +32,7 @@ import {
 } from "@/lib/board";
 import { getBoardService } from "@/lib/get-board-service";
 import { NotificationBell } from "@/app/notification-bell";
+import { useAccessibleDialog } from "@/app/use-accessible-dialog";
 
 type SelectedSlot = {
   id: string;
@@ -53,6 +53,8 @@ type Lightbox = {
   images: QrImage[];
   index: number;
 };
+
+type Confirmation = { kind: "discard" } | { kind: "clear" } | { kind: "image"; index: number };
 
 type InstallPlatform = "ios" | "android" | "desktop";
 
@@ -86,6 +88,8 @@ const copy = {
     clearConfirm: "Clear all courts and QR images from this slot?",
     cancel: "Cancel",
     save: "Save",
+    saving: "Saving…",
+    confirm: "Confirm",
     close: "Close",
     closeEditor: "Close editor",
     closeGallery: "Close image gallery",
@@ -110,6 +114,8 @@ const copy = {
     saveError: "Your changes could not be saved. Please try again.",
     offline: "You are offline. Reconnect before saving.",
     retry: "Try again",
+    loading: "Loading…",
+    noCourt: "No court recorded",
     installHelp: "Install CourtRao",
     installTitle: "Add CourtRao to your home screen",
     installIntro: "Keep the board one tap away without searching through LINE.",
@@ -137,6 +143,8 @@ const copy = {
     clearConfirm: "ล้างคอร์ทและรูป QR ทั้งหมดในช่วงเวลานี้หรือไม่",
     cancel: "ยกเลิก",
     save: "บันทึก",
+    saving: "กำลังบันทึก…",
+    confirm: "ยืนยัน",
     close: "ปิด",
     closeEditor: "ปิดหน้าต่างแก้ไข",
     closeGallery: "ปิดแกลเลอรีรูป",
@@ -162,6 +170,8 @@ const copy = {
     saveError: "ไม่สามารถบันทึกการเปลี่ยนแปลงได้ กรุณาลองอีกครั้ง",
     offline: "คุณออฟไลน์อยู่ กรุณาเชื่อมต่อก่อนบันทึก",
     retry: "ลองอีกครั้ง",
+    loading: "กำลังโหลด…",
+    noCourt: "ยังไม่มีคอร์ท",
     installHelp: "ติดตั้ง CourtRao",
     installTitle: "เพิ่ม CourtRao ไปยังหน้าจอหลัก",
     installIntro: "เปิดตารางได้ในแตะเดียวโดยไม่ต้องค้นหาจากแชต LINE",
@@ -174,8 +184,6 @@ const copy = {
 const subscribeToHydration = () => () => {};
 const languageStorageKey = "tennis-board-language";
 const languageChangeEvent = "tennis-board-language-change";
-const focusableSelector =
-  'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function getLanguageSnapshot(): Language {
   return window.localStorage.getItem(languageStorageKey) === "th" ? "th" : "en";
@@ -208,55 +216,6 @@ function subscribeToStandalone(onChange: () => void) {
   const standaloneQuery = window.matchMedia("(display-mode: standalone)");
   standaloneQuery.addEventListener("change", onChange);
   return () => standaloneQuery.removeEventListener("change", onChange);
-}
-
-function useAccessibleDialog(
-  active: boolean,
-  containerRef: RefObject<HTMLElement | null>,
-  onClose: () => void
-) {
-  const closeRef = useRef(onClose);
-
-  useEffect(() => {
-    closeRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!active) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const container = containerRef.current;
-    const focusables = Array.from(
-      container?.querySelectorAll<HTMLElement>(focusableSelector) ?? []
-    );
-    (focusables[0] ?? container)?.focus();
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      previousFocus?.focus();
-    };
-  }, [active, containerRef]);
 }
 
 function Dialog({
@@ -317,10 +276,11 @@ export default function Home() {
   const [gallery, setGallery] = useState<Gallery | null>(null);
   const [lightbox, setLightbox] = useState<Lightbox | null>(null);
   const [imageError, setImageError] = useState("");
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [notice, setNotice] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [boardError, setBoardError] = useState("");
+  const [boardError, setBoardError] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [isInstallHelpOpen, setIsInstallHelpOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -365,11 +325,11 @@ export default function Home() {
         setIsLoading(false);
       },
       onError() {
-        setBoardError(copy[language].boardError);
+        setBoardError(true);
         setIsLoading(false);
       },
     });
-  }, [baseDays, language, retryKey]);
+  }, [baseDays, retryKey]);
 
   useEffect(() => {
     const updateConnection = () => setIsOffline(!navigator.onLine);
@@ -408,23 +368,23 @@ export default function Home() {
     setImageError("");
   }
 
-  const closeEditor = useCallback(() => {
-    const hasChanges = !snapshotsMatch(editorSnapshot, selectedCourts, qrImages);
-    if (hasChanges && !window.confirm(copy[language].discardConfirm)) return;
+  const finishEditor = useCallback(() => {
     setSelectedSlot(null);
     setSelectedCourts([]);
     setQrImages([]);
     setEditorSnapshot(null);
     setImageError("");
-  }, [editorSnapshot, language, qrImages, selectedCourts]);
+    setConfirmation(null);
+  }, []);
 
-  function finishEditor() {
-    setSelectedSlot(null);
-    setSelectedCourts([]);
-    setQrImages([]);
-    setEditorSnapshot(null);
-    setImageError("");
-  }
+  const closeEditor = useCallback(() => {
+    if (confirmation) {
+      setConfirmation(null);
+      return;
+    }
+    if (snapshotsMatch(editorSnapshot, selectedCourts, qrImages)) finishEditor();
+    else setConfirmation({ kind: "discard" });
+  }, [confirmation, editorSnapshot, finishEditor, qrImages, selectedCourts]);
 
   function toggleCourt(court: Court) {
     setSelectedCourts((current) =>
@@ -454,7 +414,7 @@ export default function Home() {
   }
 
   async function clearSlot() {
-    if (isSubmitting || !selectedSlot || !window.confirm(t.clearConfirm)) return;
+    if (isSubmitting || !selectedSlot) return;
     if (isOffline) {
       setImageError(t.offline);
       return;
@@ -473,9 +433,22 @@ export default function Home() {
   }
 
   function removeImage(index: number) {
-    const image = qrImages[index];
-    if (!image || !window.confirm(t.removeImage(image.name))) return;
-    setQrImages((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    if (qrImages[index]) setConfirmation({ kind: "image", index });
+  }
+
+  function confirmationMessage(item: Confirmation) {
+    if (item.kind === "discard") return t.discardConfirm;
+    if (item.kind === "clear") return t.clearConfirm;
+    return t.removeImage(qrImages[item.index]?.name ?? "");
+  }
+
+  function acceptConfirmation() {
+    const item = confirmation;
+    setConfirmation(null);
+    if (!item) return;
+    if (item.kind === "discard") finishEditor();
+    else if (item.kind === "clear") void clearSlot();
+    else setQrImages((current) => current.filter((_, itemIndex) => itemIndex !== item.index));
   }
 
   function handleQrChange(event: ChangeEvent<HTMLInputElement>) {
@@ -563,7 +536,22 @@ export default function Home() {
   }, [baseDays.length, isHydrated, navigateToNotification]);
 
   function renderCourts(slot: Slot) {
-    return slot.courts.length > 0 ? slot.courts.join(", ") : "—";
+    if (isLoading) return <span className="skeleton motion-safe:animate-pulse" aria-hidden="true" />;
+    if (slot.courts.length === 0) {
+      return (
+        <span className="court-empty">
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">{t.noCourt}</span>
+        </span>
+      );
+    }
+    return (
+      <span className="court-list">
+        {slot.courts.map((court) => (
+          <span className="court-chip" key={court}>{court}</span>
+        ))}
+      </span>
+    );
   }
 
   function renderSlotActions(day: Day, slot: Slot) {
@@ -590,11 +578,12 @@ export default function Home() {
           type="button"
           onClick={() => openEditor(day, slot)}
           aria-label={t.editLabel(day.label, slot.time)}
+          disabled={isLoading}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="m16.9 3.6 3.5 3.5a1.4 1.4 0 0 1 0 2L9.2 20.3 3 21l.7-6.2L14.9 3.6a1.4 1.4 0 0 1 2 0ZM6 15.8l-.3 2.5 2.5-.3 9.3-9.3-2.2-2.2L6 15.8Z" />
           </svg>
-          {t.edit}
+          <span className="btn-label">{t.edit}</span>
         </button>
       </span>
     );
@@ -618,7 +607,7 @@ export default function Home() {
             title={t.installHelp}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm.1-5.5a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5ZM12 6.3c-2.1 0-3.6 1.3-3.7 3.2h2c.1-.8.7-1.4 1.7-1.4s1.7.5 1.7 1.3c0 .7-.4 1.1-1.3 1.7-1 .6-1.5 1.3-1.5 2.4h2c0-.5.3-.8 1.1-1.3 1-.7 1.8-1.5 1.8-2.9 0-1.8-1.5-3-3.8-3Z" />
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
             </svg>
           </button>
         )}
@@ -634,29 +623,34 @@ export default function Home() {
             aria-label={language === "en" ? "Switch to Thai" : "เปลี่ยนเป็นภาษาอังกฤษ"}
             onClick={changeLanguage}
           >
-            {language === "en" ? "EN" : "TH"}
+            <span className={language === "en" ? "on" : undefined}>EN</span>
+            <span className={language === "th" ? "on" : undefined}>TH</span>
           </button>
-          <button type="button" onClick={scrollToToday}>
+          <button type="button" className="today-button" onClick={scrollToToday}>
             {t.todayShortcut}
           </button>
         </div>
       </nav>
 
-      <section className="day-list" aria-label={t.scheduleLabel}>
-        {isLoading && <p role="status">Loading…</p>}
+      <section className="day-list" aria-label={t.scheduleLabel} aria-busy={isLoading}>
+        {isLoading && <p className="sr-only" role="status">{t.loading}</p>}
         {boardError && (
-          <p role="alert">
-            {boardError}{" "}
+          <p className="banner banner-error" role="alert">
+            {t.boardError}
             <button type="button" onClick={() => {
               setIsLoading(true);
-              setBoardError("");
+              setBoardError(false);
               setRetryKey((value) => value + 1);
             }}>
               {t.retry}
             </button>
           </p>
         )}
-        {isOffline && <p role="status">{t.offline}</p>}
+        {isOffline && <p className="banner" role="status">{t.offline}</p>}
+        {baseDays.length === 0 &&
+          Array.from({ length: 4 }, (_, index) => (
+            <div className="day-card skeleton-card motion-safe:animate-pulse" key={index} aria-hidden="true" />
+          ))}
         {boardDays.map((day) => (
           <article
             className={`day-card ${day.isToday ? "today" : ""}`}
@@ -664,8 +658,8 @@ export default function Home() {
             ref={day.isToday ? todayRef : undefined}
           >
             <h2>
-              {day.isToday && <span className="today-label">{t.today} · </span>}
-              {day.label} · {day.displayDate}
+              <span>{day.label}</span>
+              {day.isToday && <span className="today-badge">{t.today}</span>}
             </h2>
             <div className="slot-list">
               {day.slots.map((slot) => (
@@ -675,10 +669,10 @@ export default function Home() {
                     data-slot-key={`${day.id}/${slot.time}`}
                   >
                     <time>{slot.time}</time>
-                    <span className="court-name">{renderCourts(slot)}</span>
-                    <span className="slot-meta">
+                    <div className="slot-main">
+                      {renderCourts(slot)}
                       {slot.updatedAt && <small>{t.updated(formatUpdatedAt(slot.updatedAt, language))}</small>}
-                    </span>
+                    </div>
                     {renderSlotActions(day, slot)}
                   </div>
               ))}
@@ -733,61 +727,79 @@ export default function Home() {
           labelledBy="editor-title"
           onClose={closeEditor}
         >
-          <header className="editor-header">
-            <div>
-              <p>{t.editSlot}</p>
-              <h2 id="editor-title">{selectedSlot.label} · {selectedSlot.time}</h2>
+          <div className="editor-body">
+            <header className="editor-header">
+              <div>
+                <p>{t.editSlot}</p>
+                <h2 id="editor-title">{selectedSlot.label} · {selectedSlot.time}</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={closeEditor} aria-label={t.closeEditor}>×</button>
+            </header>
+            <fieldset>
+              <legend>{t.courts}</legend>
+              <div className="court-options">
+                {allowedCourts.map((court) => {
+                  const isSelected = selectedCourts.includes(court);
+                  return (
+                    <button
+                      className={`court-option ${isSelected ? "selected" : ""}`}
+                      type="button"
+                      key={court}
+                      onClick={() => toggleCourt(court)}
+                      aria-pressed={isSelected}
+                    >
+                      {court}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+            <div className="qr-field">
+              <input id="qr-image" className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={handleQrChange} />
+              <label className="upload-button" htmlFor="qr-image">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2Z" />
+                </svg>
+                {t.qrImages}
+              </label>
+              <small>{t.imageHelp}</small>
+              {imageError && <p className="field-error" role="alert">{imageError}</p>}
             </div>
-            <button className="icon-button" type="button" onClick={closeEditor} aria-label={t.closeEditor}>×</button>
-          </header>
-          <fieldset>
-            <legend>{t.courts}</legend>
-            <div className="court-options">
-              {allowedCourts.map((court) => {
-                const isSelected = selectedCourts.includes(court);
-                return (
-                  <button
-                    className={`court-option ${isSelected ? "selected" : ""}`}
-                    type="button"
-                    key={court}
-                    onClick={() => toggleCourt(court)}
-                    aria-pressed={isSelected}
-                  >
-                    {court}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-          <div className="qr-field">
-            <label htmlFor="qr-image">{t.qrImages}</label>
-            <input id="qr-image" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={handleQrChange} />
-            <small>{t.imageHelp}</small>
-            {imageError && <p className="field-error" role="alert">{imageError}</p>}
+            {qrImages.length > 0 && (
+              <div className="qr-gallery" aria-label={t.selectedImages}>
+                {qrImages.map((image, index) => (
+                  <div className="qr-preview" key={`${image.name}-${index}`}>
+                    <button
+                      className="qr-thumbnail"
+                      type="button"
+                      onClick={() => setLightbox({ images: qrImages, index })}
+                      aria-label={t.viewNamedImage(image.name)}
+                    >
+                      <Image src={image.url} alt="" width={180} height={180} unoptimized />
+                    </button>
+                    <p title={image.name}>{image.name}</p>
+                    <button type="button" onClick={() => removeImage(index)}>{t.remove}</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {qrImages.length > 0 && (
-            <div className="qr-gallery" aria-label={t.selectedImages}>
-              {qrImages.map((image, index) => (
-                <div className="qr-preview" key={`${image.name}-${index}`}>
-                  <button
-                    className="qr-thumbnail"
-                    type="button"
-                    onClick={() => setLightbox({ images: qrImages, index })}
-                    aria-label={t.viewNamedImage(image.name)}
-                  >
-                    <Image src={image.url} alt="" width={180} height={180} unoptimized />
-                  </button>
-                  <p title={image.name}>{image.name}</p>
-                  <button type="button" onClick={() => removeImage(index)}>{t.remove}</button>
-                </div>
-              ))}
+          {confirmation && (
+            <div className="confirm-bar" role="alert">
+              <p>{confirmationMessage(confirmation)}</p>
+              <div>
+                <button type="button" onClick={() => setConfirmation(null)} autoFocus>{t.cancel}</button>
+                <button className="confirm-yes" type="button" onClick={acceptConfirmation}>{t.confirm}</button>
+              </div>
             </div>
           )}
           <div className="editor-actions">
-            <button className="danger-button" type="button" onClick={clearSlot} disabled={isSubmitting}>{t.clearSlot}</button>
+            <button className="danger-button" type="button" onClick={() => setConfirmation({ kind: "clear" })} disabled={isSubmitting}>{t.clearSlot}</button>
             <div>
               <button type="button" onClick={closeEditor}>{t.cancel}</button>
-              <button className="save-button" type="button" onClick={saveSlot} disabled={isSubmitting}>{t.save}</button>
+              <button className="save-button" type="button" onClick={saveSlot} disabled={isSubmitting} aria-busy={isSubmitting}>
+                {isSubmitting ? t.saving : t.save}
+              </button>
             </div>
           </div>
         </Dialog>

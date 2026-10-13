@@ -152,10 +152,10 @@ export function formatDateRange(days: Day[], language: Language) {
   const formatter = new Intl.DateTimeFormat(language === "th" ? "th-TH" : "en-GB", {
     timeZone: "UTC",
     day: "numeric",
-    month: "long",
+    month: "short",
     year: "numeric",
   });
-  return `${formatter.format(new Date(`${days[0].id}T12:00:00Z`))} – ${formatter.format(new Date(`${days.at(-1)!.id}T12:00:00Z`))}`;
+  return formatter.formatRange(new Date(`${days[0].id}T12:00:00Z`), new Date(`${days.at(-1)!.id}T12:00:00Z`));
 }
 
 export function formatUpdatedAt(updatedAt: Date, language: Language, now = new Date()) {

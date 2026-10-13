@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAccessibleDialog } from "@/app/use-accessible-dialog";
 import type { Language, SlotTime } from "@/lib/board";
 import { isFirebaseConfigured } from "@/lib/firebase-client";
 import { getNotificationService, type PushState } from "@/lib/firebase-notification-service";
@@ -49,14 +50,9 @@ export function NotificationBell({ language, onNavigate, onNotice }: {
     return () => { stop(); stopMessage(); };
   }, [language, onNotice, t.error, t.title]);
 
+  const panelRef = useRef<HTMLElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const escape = (event: KeyboardEvent) => event.key === "Escape" && close();
-    document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("keydown", escape); previous?.focus(); };
-  }, [close, open]);
+  useAccessibleDialog(open, panelRef, close);
 
   async function enable() {
     setBusy(true); setError("");
@@ -84,7 +80,7 @@ export function NotificationBell({ language, onNavigate, onNotice }: {
       </button>
       {open && <>
         <button className="notification-scrim" type="button" aria-label={t.close} onClick={close} />
-        <section className="notification-panel" role="dialog" aria-modal="true" aria-label={t.title}>
+        <section className="notification-panel" ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t.title}>
           <header><h2>{t.title}</h2><button type="button" className="icon-button" onClick={close} aria-label={t.close}>×</button></header>
           {!isFirebaseConfigured && <p className="notification-info">{t.local}</p>}
           {isFirebaseConfigured && pushState === "default" && <div className="notification-enable"><p>{t.intro}</p><button type="button" onClick={enable} disabled={busy}>{t.enable}</button></div>}

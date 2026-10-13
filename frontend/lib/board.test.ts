@@ -41,9 +41,14 @@ describe("board domain", () => {
     expect(merged[0].slots[1].courts).toEqual([]);
   });
 
-  it("formats a localized visible range", () => {
+  it("formats a compact localized visible range", () => {
     const days = createDateRange("en", new Date("2026-07-20T05:00:00Z"));
-    expect(formatDateRange(days, "en")).toContain("20 July 2026");
+    expect(formatDateRange(days, "en")).toMatch(/^20\s–\s26 Jul 2026$/);
+  });
+
+  it("keeps both months when the visible range crosses a month", () => {
+    const days = createDateRange("en", new Date("2026-09-30T05:00:00Z"));
+    expect(formatDateRange(days, "en")).toMatch(/^30 Sept\s–\s6 Oct 2026$/);
   });
 
   describe("updated-at formatting", () => {
