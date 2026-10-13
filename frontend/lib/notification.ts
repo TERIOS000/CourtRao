@@ -19,13 +19,13 @@ export function notificationText(notification: BoardNotification, language: Lang
   }).format(new Date(`${notification.dayId}T12:00:00Z`));
   const combinedReminder = notification.reminderSlots
     .map((slot) => `${slot.time} ${slot.courts.join(", ")}`)
-    .join(" · ");
+    .join("\n");
 
   if (language === "th") {
-    return { title: "เตือนการจองคอร์ท", body: `${date} · ${combinedReminder}` };
+    return { title: "เตือนการจองคอร์ท", body: `${date}\n${combinedReminder}` };
   }
 
-  return { title: "Court booking reminder", body: `${date} · ${combinedReminder}` };
+  return { title: "Court booking reminder", body: `${date}\n${combinedReminder}` };
 }
 
 export function isActiveNotification(expiresAt: Date, now = new Date()) {

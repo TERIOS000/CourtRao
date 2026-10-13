@@ -19,13 +19,13 @@ describe("notifications", () => {
 
   it("combines all occupied slots in a daily reminder", () => {
     const result = notificationText(item, "en");
-    expect(result.body).toBe("22 Jul · 18:00 C1, C2 · 20:00 C4");
+    expect(result.body).toBe("22 Jul\n18:00 C1, C2\n20:00 C4");
   });
 
   it("formats daily reminders in Thai", () => {
     expect(notificationText(item, "th")).toEqual({
       title: "เตือนการจองคอร์ท",
-      body: "22 ก.ค. · 18:00 C1, C2 · 20:00 C4",
+      body: "22 ก.ค.\n18:00 C1, C2\n20:00 C4",
     });
   });
 });
